@@ -1,93 +1,96 @@
 package id.mizanku.app
 
-import android.app.Activity
-import android.os.Bundle
+import android.app.*
+import android.content.*
+import android.database.sqlite.*
+import android.database.Cursor
 import android.graphics.Typeface
+import android.net.Uri
+import android.os.Bundle
 import android.view.Gravity
+import android.view.View
 import android.widget.*
-import android.database.sqlite.SQLiteOpenHelper
-import android.content.ContentValues
-import android.database.sqlite.SQLiteDatabase
+import com.google.zxing.integration.android.IntentIntegrator
+import org.json.*
 import java.text.NumberFormat
-import java.util.Locale
+import java.text.SimpleDateFormat
+import java.util.*
 
-data class Product(val id: Long, val name: String, val price: Long)
-class StoreDb(activity: Activity) : SQLiteOpenHelper(activity, "mizanku.db", null, 1) {
-    override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, price INTEGER NOT NULL)")
-        db.execSQL("CREATE TABLE sales(id INTEGER PRIMARY KEY AUTOINCREMENT, total INTEGER NOT NULL, created_at INTEGER NOT NULL)")
-        listOf("Kopi Susu Aren" to 18000L, "Es Teh Manis" to 5000L, "Nasi Goreng" to 25000L).forEach { (name, price) ->
-            val values = ContentValues().apply { put("name", name); put("price", price) }
-            db.insert("products", null, values)
-        }
-    }
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
-    fun products(): List<Product> {
-        val result = mutableListOf<Product>()
-        readableDatabase.rawQuery("SELECT id,name,price FROM products ORDER BY name", null).use { c ->
-            while (c.moveToNext()) result.add(Product(c.getLong(0), c.getString(1), c.getLong(2)))
-        }
-        return result
-    }
-    fun add(name: String, price: Long) {
-        val values = ContentValues().apply { put("name", name); put("price", price) }
-        writableDatabase.insert("products", null, values)
-    }
-    fun sale(total: Long) {
-        val values = ContentValues().apply { put("total", total); put("created_at", System.currentTimeMillis()) }
-        writableDatabase.insert("sales", null, values)
-    }
+data class Product(val id:Long,val name:String,val price:Long,val cost:Long,val stock:Int,val barcode:String,val category:String)
+data class Line(val p:Product,var qty:Int)
+
+class StoreDb(a:Activity):SQLiteOpenHelper(a,"mizanku.db",null,2){
+ override fun onCreate(d:SQLiteDatabase){
+  d.execSQL("CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT,price INTEGER,cost INTEGER DEFAULT 0,stock INTEGER DEFAULT 0,barcode TEXT DEFAULT '',category TEXT DEFAULT '',archived INTEGER DEFAULT 0)")
+  d.execSQL("CREATE UNIQUE INDEX idx_barcode ON products(barcode) WHERE barcode<>''")
+  d.execSQL("CREATE TABLE sales(id INTEGER PRIMARY KEY AUTOINCREMENT,total INTEGER,discount INTEGER DEFAULT 0,payment TEXT,created_at INTEGER,customer TEXT DEFAULT '')")
+  d.execSQL("CREATE TABLE sale_items(id INTEGER PRIMARY KEY AUTOINCREMENT,sale_id INTEGER,product_id INTEGER,name TEXT,price INTEGER,qty INTEGER,subtotal INTEGER)")
+  d.execSQL("CREATE TABLE stock_moves(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,qty INTEGER,kind TEXT,note TEXT,created_at INTEGER)")
+  d.execSQL("CREATE TABLE cashbook(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,party TEXT,note TEXT,amount INTEGER,created_at INTEGER)")
+  d.execSQL("CREATE TABLE cash_payments(id INTEGER PRIMARY KEY AUTOINCREMENT,cash_id INTEGER,amount INTEGER,note TEXT,created_at INTEGER)")
+  d.execSQL("CREATE TABLE settings(k TEXT PRIMARY KEY,v TEXT)")
+  listOf("Kopi Susu Aren" to 18000L,"Es Teh Manis" to 5000L,"Nasi Goreng" to 25000L).forEach{val v=ContentValues().apply{put("name",it.first);put("price",it.second)};d.insert("products",null,v)}
+ }
+ override fun onUpgrade(d:SQLiteDatabase,o:Int,n:Int){
+  if(o<2){
+   listOf("ALTER TABLE products ADD COLUMN cost INTEGER DEFAULT 0","ALTER TABLE products ADD COLUMN stock INTEGER DEFAULT 0","ALTER TABLE products ADD COLUMN barcode TEXT DEFAULT ''","ALTER TABLE products ADD COLUMN category TEXT DEFAULT ''","ALTER TABLE products ADD COLUMN archived INTEGER DEFAULT 0","ALTER TABLE sales ADD COLUMN discount INTEGER DEFAULT 0","ALTER TABLE sales ADD COLUMN payment TEXT DEFAULT 'Tunai'","ALTER TABLE sales ADD COLUMN customer TEXT DEFAULT ''").forEach{try{d.execSQL(it)}catch(_:Exception){}}
+   d.execSQL("CREATE TABLE IF NOT EXISTS sale_items(id INTEGER PRIMARY KEY AUTOINCREMENT,sale_id INTEGER,product_id INTEGER,name TEXT,price INTEGER,qty INTEGER,subtotal INTEGER)")
+   d.execSQL("CREATE TABLE IF NOT EXISTS stock_moves(id INTEGER PRIMARY KEY AUTOINCREMENT,product_id INTEGER,qty INTEGER,kind TEXT,note TEXT,created_at INTEGER)")
+   d.execSQL("CREATE TABLE IF NOT EXISTS cashbook(id INTEGER PRIMARY KEY AUTOINCREMENT,kind TEXT,party TEXT,note TEXT,amount INTEGER,created_at INTEGER)")
+   d.execSQL("CREATE TABLE IF NOT EXISTS cash_payments(id INTEGER PRIMARY KEY AUTOINCREMENT,cash_id INTEGER,amount INTEGER,note TEXT,created_at INTEGER)")
+   d.execSQL("CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY,v TEXT)")
+  }
+ }
+ fun products(q:String=""):List<Product>{val a=mutableListOf<Product>();readableDatabase.rawQuery("SELECT id,name,price,cost,stock,barcode,category FROM products WHERE archived=0 AND (name LIKE ? OR barcode LIKE ? OR category LIKE ?) ORDER BY name",arrayOf("%"+q+"%","%"+q+"%","%"+q+"%")).use{c->while(c.moveToNext())a.add(Product(c.getLong(0),c.getString(1),c.getLong(2),c.getLong(3),c.getInt(4),c.getString(5)?: "",c.getString(6)?: ""))};return a}
+ fun save(id:Long,n:String,p:Long,c:Long,s:Int,b:String,cat:String){val v=ContentValues().apply{put("name",n);put("price",p);put("cost",c);put("stock",s);put("barcode",b);put("category",cat)};if(id==0L)writableDatabase.insertOrThrow("products",null,v)else writableDatabase.update("products",v,"id=?",arrayOf(id.toString()))}
+ fun archive(id:Long){writableDatabase.execSQL("UPDATE products SET archived=1 WHERE id=?",arrayOf(id))}
+ fun stock(id:Long,delta:Int,kind:String,note:String){val d=writableDatabase;d.beginTransaction();try{d.execSQL("UPDATE products SET stock=MAX(0,stock+?) WHERE id=?",arrayOf(delta,id));val v=ContentValues().apply{put("product_id",id);put("qty",delta);put("kind",kind);put("note",note);put("created_at",System.currentTimeMillis())};d.insert("stock_moves",null,v);d.setTransactionSuccessful()}finally{d.endTransaction()}}
+ fun checkout(lines:List<Line>,discount:Long,payment:String,customer:String):Long{val total=(lines.sumOf{it.p.price*it.qty}-discount).coerceAtLeast(0);val d=writableDatabase;d.beginTransaction();try{val v=ContentValues().apply{put("total",total);put("discount",discount);put("payment",payment);put("created_at",System.currentTimeMillis());put("customer",customer)};val id=d.insertOrThrow("sales",null,v);lines.forEach{l->val x=ContentValues().apply{put("sale_id",id);put("product_id",l.p.id);put("name",l.p.name);put("price",l.p.price);put("qty",l.qty);put("subtotal",l.p.price*l.qty)};d.insert("sale_items",null,x);d.execSQL("UPDATE products SET stock=MAX(0,stock-?) WHERE id=?",arrayOf(l.qty,l.p.id));val m=ContentValues().apply{put("product_id",l.p.id);put("qty",-l.qty);put("kind","Penjualan");put("note","Transaksi #"+id);put("created_at",System.currentTimeMillis())};d.insert("stock_moves",null,m)};if(payment=="Hutang"){val x=ContentValues().apply{put("kind","recv");put("party",customer);put("note","Penjualan #"+id);put("amount",total);put("created_at",System.currentTimeMillis())};d.insert("cashbook",null,x)};d.setTransactionSuccessful();return id}finally{d.endTransaction()}}
+ fun sales():List<JSONObject>{val a=mutableListOf<JSONObject>();readableDatabase.rawQuery("SELECT id,total,discount,payment,created_at,customer FROM sales ORDER BY created_at DESC",null).use{c->while(c.moveToNext())a.add(JSONObject().put("id",c.getLong(0)).put("total",c.getLong(1)).put("discount",c.getLong(2)).put("payment",c.getString(3)).put("time",c.getLong(4)).put("customer",c.getString(5)))};return a}
+ fun addCash(k:String,p:String,n:String,a:Long){val v=ContentValues().apply{put("kind",k);put("party",p);put("note",n);put("amount",a);put("created_at",System.currentTimeMillis())};writableDatabase.insert("cashbook",null,v)}
+ fun paid(id:Long):Long{var x=0L;readableDatabase.rawQuery("SELECT COALESCE(SUM(amount),0) FROM cash_payments WHERE cash_id=?",arrayOf(id.toString())).use{if(it.moveToFirst())x=it.getLong(0)};return x}
+ fun pay(id:Long,a:Long){val v=ContentValues().apply{put("cash_id",id);put("amount",a);put("note","Pembayaran");put("created_at",System.currentTimeMillis())};writableDatabase.insert("cash_payments",null,v)}
+ fun cashRows():List<JSONObject>{val a=mutableListOf<JSONObject>();readableDatabase.rawQuery("SELECT id,kind,party,note,amount,created_at FROM cashbook ORDER BY created_at DESC",null).use{c->while(c.moveToNext())a.add(JSONObject().put("id",c.getLong(0)).put("kind",c.getString(1)).put("party",c.getString(2)).put("note",c.getString(3)).put("amount",c.getLong(4)).put("paid",paid(c.getLong(0))).put("time",c.getLong(5)))};return a}
+ fun setting(k:String,d:String=""):String{readableDatabase.rawQuery("SELECT v FROM settings WHERE k=?",arrayOf(k)).use{if(it.moveToFirst())return it.getString(0)};return d}
+ fun set(k:String,v:String){val x=ContentValues().apply{put("k",k);put("v",v)};writableDatabase.insertWithOnConflict("settings",null,x,SQLiteDatabase.CONFLICT_REPLACE)}
+ fun moves():List<String>{val a=mutableListOf<String>();readableDatabase.rawQuery("SELECT p.name,m.qty,m.kind,m.note,m.created_at FROM stock_moves m LEFT JOIN products p ON p.id=m.product_id ORDER BY m.created_at DESC LIMIT 60",null).use{c->while(c.moveToNext())a.add(c.getString(0)+" • "+c.getInt(1)+" • "+c.getString(2)+" • "+c.getString(3)+" • "+date(c.getLong(4)))};return a}
+ fun backup():String{val o=JSONObject();listOf("products","sales","sale_items","stock_moves","cashbook","cash_payments","settings").forEach{t->val ar=JSONArray();readableDatabase.rawQuery("SELECT * FROM "+t,null).use{c->while(c.moveToNext()){val x=JSONObject();for(i in 0 until c.columnCount){val k=c.getColumnName(i);when(c.getType(i)){0->x.put(k,JSONObject.NULL);1->x.put(k,c.getLong(i));2->x.put(k,c.getDouble(i));else->x.put(k,c.getString(i))}};ar.put(x)}};o.put(t,ar)};o.put("format","mizanku-backup-1");return o.toString(2)}
+ fun restore(s:String){val o=JSONObject(s);val ts=listOf("products","sales","sale_items","stock_moves","cashbook","cash_payments","settings");val d=writableDatabase;d.beginTransaction();try{ts.forEach{t->if(o.has(t)){d.delete(t,null,null);val ar=o.getJSONArray(t);for(i in 0 until ar.length()){val x=ar.getJSONObject(i);val v=ContentValues();val it=x.keys();while(it.hasNext()){val k=it.next();val z=x.get(k);when(z){JSONObject.NULL->v.putNull(k);is Int->v.put(k,z);is Long->v.put(k,z);is Double->v.put(k,z);else->v.put(k,z.toString())}};d.insertOrThrow(t,null,v)}}};d.setTransactionSuccessful()}finally{d.endTransaction()}}
+ companion object{fun date(t:Long)=SimpleDateFormat("dd/MM/yy HH:mm",Locale("id","ID")).format(Date(t))}
 }
-class MainActivity : Activity() {
-    private lateinit var db: StoreDb
-    private val cart = linkedMapOf<Long, Pair<Product, Int>>()
-    private lateinit var content: LinearLayout
-    private val rupiah = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); db = StoreDb(this); render() }
-    private fun label(value: String, size: Float = 15f, bold: Boolean = false) = TextView(this).apply {
-        text = value; textSize = size; setTextColor(0xff172033.toInt())
-        if (bold) setTypeface(null, Typeface.BOLD)
-        setPadding(8, 8, 8, 8)
-    }
-    private fun actionButton(value: String, action: () -> Unit) = Button(this).apply { text = value; setOnClickListener { action() } }
-    private fun render() {
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16,16,16,16); setBackgroundColor(0xfff5f7fb.toInt()) }
-        root.addView(label("Mizanku",26f,true))
-        root.addView(label("Kasir UMKM • Data tersimpan di perangkat",13f))
-        val scroll = ScrollView(this)
-        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(content); root.addView(scroll, LinearLayout.LayoutParams(-1,0,1f)); setContentView(root)
-        content.addView(label("PRODUK",13f,true))
-        db.products().forEach { p ->
-            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(4,4,4,4) }
-            val info = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            info.addView(label(p.name,16f,true)); info.addView(label(rupiah.format(p.price),13f))
-            row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
-            row.addView(actionButton("Tambah") { val q = cart[p.id]?.second ?: 0; cart[p.id] = p to q+1; render() })
-            content.addView(row)
-        }
-        content.addView(label("KERANJANG",16f,true))
-        if (cart.isEmpty()) content.addView(label("Belum ada barang dipilih",13f))
-        cart.values.forEach { (p,q) -> content.addView(label(p.name + " × " + q + " — " + rupiah.format(p.price*q),14f)) }
-        val total = cart.values.sumOf { it.first.price * it.second }
-        content.addView(label("TOTAL  " + rupiah.format(total),20f,true))
-        content.addView(actionButton("Selesaikan Transaksi") {
-            if (total > 0) { db.sale(total); cart.clear(); Toast.makeText(this,"Transaksi tersimpan",Toast.LENGTH_SHORT).show(); render() }
-            else Toast.makeText(this,"Keranjang masih kosong",Toast.LENGTH_SHORT).show()
-        })
-        content.addView(actionButton("Tambah Produk") { addProductDialog() })
-        content.addView(label("Prototipe awal 0.1.0 — fitur lanjutan sedang dikembangkan",11f))
-    }
-    private fun addProductDialog() {
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24,8,24,8) }
-        val name = EditText(this).apply { hint = "Nama produk" }
-        val price = EditText(this).apply { hint = "Harga (angka)"; inputType = 2 }
-        form.addView(name); form.addView(price)
-        android.app.AlertDialog.Builder(this).setTitle("Tambah Produk").setView(form)
-            .setNegativeButton("Batal",null).setPositiveButton("Simpan") { _,_ ->
-                val n = name.text.toString().trim(); val p = price.text.toString().toLongOrNull()
-                if (n.isNotEmpty() && p != null && p > 0) { db.add(n,p); render() }
-                else Toast.makeText(this,"Nama dan harga harus diisi dengan benar",Toast.LENGTH_SHORT).show()
-            }.show()
-    }
+
+class MainActivity:Activity(){
+ lateinit var db:StoreDb;val cart=linkedMapOf<Long,Line>();var page="Kasir";var discount=0L;var qris=""
+ lateinit var body:LinearLayout;val money=NumberFormat.getCurrencyInstance(Locale("id","ID"));val ink=0xff172033.toInt()
+ var pending=""
+ override fun onCreate(b:Bundle?){super.onCreate(b);db=StoreDb(this);qris=db.setting("qris");render()}
+ fun label(s:String,z:Float=14f,b:Boolean=false)=TextView(this).apply{text=s;textSize=z;setTextColor(ink);if(b)setTypeface(null,Typeface.BOLD);setPadding(8,8,8,8)}
+ fun button(s:String,f:()->Unit)=Button(this).apply{text=s;setOnClickListener{f()}}
+ fun input(h:String,v:String="",num:Boolean=false)=EditText(this).apply{hint=h;setText(v);if(num)inputType=2}
+ fun add(v:View){body.addView(v)}
+ fun row(vararg v:View)=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER_VERTICAL;v.forEach{addView(it,LinearLayout.LayoutParams(0,-2,1f))}}
+ fun heading(s:String){add(label(s,18f,true))}
+ fun card(s:String){val v=label(s,15f);v.setBackgroundColor(-1);val p=LinearLayout.LayoutParams(-1,-2);p.setMargins(0,4,0,4);body.addView(v,p)}
+ fun render(){val root=LinearLayout(this).apply{orientation=1;setPadding(10,8,10,8);setBackgroundColor(0xfff2f5f4.toInt())};root.addView(label(db.setting("store","Mizanku"),24f,true));root.addView(label("Kasir UMKM • Offline • v0.2.0",12f));val nav=HorizontalScrollView(this);val bar=LinearLayout(this).apply{orientation=0};listOf("Beranda","Kasir","Produk","Stok","Riwayat","Buku Kas","Pengaturan").forEach{bar.addView(button(it){page=it;render()})};nav.addView(bar);root.addView(nav);val sc=ScrollView(this);body=LinearLayout(this).apply{orientation=1};sc.addView(body);root.addView(sc,LinearLayout.LayoutParams(-1,0,1f));setContentView(root);when(page){"Beranda"->home();"Kasir"->pos();"Produk"->products();"Stok"->inventory();"Riwayat"->history();"Buku Kas"->cashbook();else->settings()}}
+ fun home(){heading("Ringkasan Hari Ini");var sum=0L;var count=0;db.sales().filter{it.getLong("time")>=dayStart()}.forEach{sum+=it.getLong("total");count++};card("Penjualan hari ini: "+money.format(sum)+"\n"+count+" transaksi");card("Produk aktif: "+db.products().size+" • Stok menipis: "+db.products().count{it.stock<=5});add(button("Mulai Transaksi"){page="Kasir";render()});heading("Transaksi Terbaru");db.sales().take(5).forEach{card("#"+it.getLong("id")+" • "+StoreDb.date(it.getLong("time"))+"\n"+money.format(it.getLong("total")))}}
+ fun dayStart():Long{val c=Calendar.getInstance();c.set(Calendar.HOUR_OF_DAY,0);c.set(Calendar.MINUTE,0);c.set(Calendar.SECOND,0);c.set(Calendar.MILLISECOND,0);return c.timeInMillis}
+ fun pos(){heading("Kasir / Penjualan");val search=input("Cari nama produk / barcode");add(search);add(row(button("Cari"){showProducts(search.text.toString())},button("Scan Barcode"){IntentIntegrator(this).setPrompt("Arahkan kamera ke barcode").setBeepEnabled(false).initiateScan()}));val code=input("Barcode scanner USB/Bluetooth");add(row(code,button("Tambah Kode"){val p=db.products(code.text.toString()).firstOrNull{it.barcode==code.text.toString()};if(p==null)toast("Barcode tidak ditemukan")else addCart(p)}));add(button("Tampilkan Produk"){showProducts(search.text.toString())});heading("Keranjang");if(cart.isEmpty())card("Keranjang masih kosong");cart.values.forEach{l->card(l.p.name+" × "+l.qty+" = "+money.format(l.p.price*l.qty));add(row(button("−"){if(l.qty>1)l.qty-- else cart.remove(l.p.id);render()},button("+"){l.qty++;render()},button("Hapus"){cart.remove(l.p.id);render()}))};val sub=cart.values.sumOf{it.p.price*it.qty};val total=(sub-discount).coerceAtLeast(0);card("Subtotal "+money.format(sub)+"\nDiskon "+money.format(discount)+"\nTOTAL "+money.format(total));add(button("Atur Diskon"){val f=input("Nominal diskon",discount.toString(),true);AlertDialog.Builder(this).setTitle("Diskon").setView(f).setNegativeButton("Batal",null).setPositiveButton("Simpan"){_,_->discount=f.text.toString().toLongOrNull()?:0;render()}.show()});add(button("Pembayaran / Selesaikan"){if(cart.isEmpty())toast("Keranjang kosong")else payDialog(total)})}
+ fun showProducts(q:String){val ps=db.products(q);if(ps.isEmpty()){toast("Produk tidak ditemukan");return};AlertDialog.Builder(this).setTitle("Pilih produk").setItems(ps.map{it.name+" • "+money.format(it.price)+" • stok "+it.stock}.toTypedArray()){_,i->addCart(ps[i])}.show()}
+ fun addCart(p:Product){val l=cart[p.id];if(l==null)cart[p.id]=Line(p,1)else l.qty++;render()}
+ fun payDialog(total:Long){val customer=input("Nama pelanggan (wajib untuk hutang)");val opts=arrayOf("Tunai","QRIS","Debit","Hutang");AlertDialog.Builder(this).setTitle("Pembayaran "+money.format(total)).setView(customer).setItems(opts){_,i->val method=opts[i];if(method=="Hutang"&&customer.text.isNullOrBlank()){toast("Nama pelanggan wajib diisi");return@setItems};if(method=="QRIS"&&qris.isNotBlank())try{startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(qris)))}catch(_:Exception){};val id=db.checkout(cart.values.toList(),discount,method,customer.text.toString());val receipt=receipt(id,total,method);cart.clear();discount=0;render();AlertDialog.Builder(this).setTitle("Transaksi tersimpan").setMessage(receipt).setPositiveButton("Bagikan struk"){_,_->share(receipt)}.setNegativeButton("Selesai",null).show()}.setNegativeButton("Batal",null).show()}
+ fun receipt(id:Long,total:Long,method:String):String{val s=StringBuilder(db.setting("store","Mizanku")+"\n"+db.setting("address")+"\n"+db.setting("phone")+"\n----------------\nNo #"+id+"\n"+StoreDb.date(System.currentTimeMillis())+"\n");db.readableDatabase.rawQuery("SELECT name,qty,subtotal FROM sale_items WHERE sale_id=?",arrayOf(id.toString())).use{c->while(c.moveToNext())s.append(c.getString(0)+" x"+c.getInt(1)+" "+money.format(c.getLong(2))+"\n")};s.append("----------------\nTOTAL "+money.format(total)+"\n"+method+"\n"+db.setting("footer","Terima kasih"));return s.toString()}
+ fun share(s:String){startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,s),"Bagikan struk"))}
+ fun products(){heading("Produk & Harga");add(button("＋ Tambah Produk"){productDialog(null)});val q=input("Cari produk / barcode");add(q);add(button("Cari"){val ps=db.products(q.text.toString());showProductResults(ps)});listProducts(db.products())}
+ fun showProductResults(ps:List<Product>){if(ps.isEmpty())toast("Produk tidak ditemukan")else AlertDialog.Builder(this).setTitle("Hasil pencarian").setItems(ps.map{it.name+" • "+money.format(it.price)}.toTypedArray()){_,i->productDialog(ps[i])}.show()}
+ fun listProducts(ps:List<Product>){ps.forEach{p->card(p.name+" • "+money.format(p.price)+"\nModal "+money.format(p.cost)+" • Stok "+p.stock+"\n"+p.category+" • Barcode "+p.barcode);add(row(button("Edit"){productDialog(p)},button("Arsipkan"){AlertDialog.Builder(this).setMessage("Arsipkan produk ini?").setNegativeButton("Batal",null).setPositiveButton("Ya"){_,_->db.archive(p.id);render()}.show()}))}}
+ fun productDialog(p:Product?){val box=LinearLayout(this).apply{orientation=1;setPadding(18,4,18,4)};val n=input("Nama produk",p?.name?:"");val price=input("Harga jual",p?.price?.toString()?:"",true);val cost=input("Harga modal",p?.cost?.toString()?:"",true);val stock=input("Stok",p?.stock?.toString()?:"0",true);val code=input("Barcode / SKU",p?.barcode?:"");val cat=input("Kategori",p?.category?:"");listOf(n,price,cost,stock,code,cat).forEach{box.addView(it)};AlertDialog.Builder(this).setTitle(if(p==null)"Tambah Produk" else "Edit Produk").setView(box).setNegativeButton("Batal",null).setPositiveButton("Simpan"){_,_->val v=price.text.toString().toLongOrNull();if(n.text.isNullOrBlank()||v==null||v<=0){toast("Nama dan harga wajib benar");return@setPositiveButton};try{db.save(p?.id?:0,n.text.toString(),v,cost.text.toString().toLongOrNull()?:0,stock.text.toString().toIntOrNull()?:0,code.text.toString().trim(),cat.text.toString());render()}catch(_:Exception){toast("Barcode mungkin sudah digunakan")}}.show()}
+ fun inventory(){heading("Penyesuaian Stok");val ps=db.products();if(ps.isEmpty()){card("Tambahkan produk terlebih dahulu");return};val sp=Spinner(this);sp.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,ps.map{it.name+" (stok "+it.stock+")"});add(sp);val kind=Spinner(this);kind.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,arrayOf("Stok Masuk","Stok Keluar","Samakan stok fisik"));add(kind);val qty=input("Jumlah / stok fisik",num=true);val note=input("Catatan / nomor dokumen");add(qty);add(note);add(button("Simpan Perubahan Stok"){val n=qty.text.toString().toIntOrNull();if(n==null||n<0){toast("Jumlah tidak valid");return@button};val p=ps[sp.selectedItemPosition];val delta=when(kind.selectedItemPosition){0->n;1->-n;else->n-p.stock};db.stock(p.id,delta,kind.selectedItem.toString(),note.text.toString());toast("Stok diperbarui");render()});heading("Daftar Persediaan");db.products().forEach{card(it.name+" • Stok "+it.stock)};heading("Riwayat Perubahan");db.moves().forEach{card(it)}}
+ fun history(){heading("Riwayat Penjualan");val sales=db.sales();card(sales.size.toString()+" transaksi • Total "+money.format(sales.sumOf{it.getLong("total")}));sales.forEach{s->val id=s.getLong("id");card("#"+id+" • "+StoreDb.date(s.getLong("time"))+"\n"+money.format(s.getLong("total"))+" • "+s.getString("payment")+" • "+s.getString("customer"));add(button("Bagikan Struk"){share(receipt(id,s.getLong("total"),s.getString("payment")))})};add(button("Ekspor Riwayat CSV"){val b=StringBuilder("ID,Tanggal,Total,Diskon,Pembayaran,Pelanggan\n");sales.forEach{b.append(it.getLong("id").toString()+","+StoreDb.date(it.getLong("time"))+","+it.getLong("total")+","+it.getLong("discount")+","+it.getString("payment")+","+it.getString("customer")+"\n")};saveText("text/csv","Mizanku-riwayat.csv",b.toString())})}
+ fun cashbook(){heading("Buku Kas");add(button("＋ Catat Transaksi Kas"){cashDialog()});var inc=0L;var out=0L;var recv=0L;var debt=0L;val rows=db.cashRows();rows.forEach{val k=it.getString("kind");val r=(it.getLong("amount")-it.getLong("paid")).coerceAtLeast(0);when(k){"in"->inc+=it.getLong("amount");"out"->out+=it.getLong("amount");"recv"->recv+=r;"debt"->debt+=r}};card("Pemasukan "+money.format(inc)+"\nPengeluaran "+money.format(out)+"\nPiutang tersisa "+money.format(recv)+"\nHutang tersisa "+money.format(debt)+"\nSaldo "+money.format(inc-out));heading("Daftar Catatan");rows.forEach{r->val id=r.getLong("id");val k=r.getString("kind");val remain=(r.getLong("amount")-r.getLong("paid")).coerceAtLeast(0);val title=when(k){"in"->"PEMASUKAN";"out"->"PENGELUARAN";"recv"->"PIUTANG";else->"HUTANG"};card(title+" • "+r.getString("party")+"\n"+r.getString("note")+"\nNilai "+money.format(r.getLong("amount"))+" • Terbayar "+money.format(r.getLong("paid"))+" • Sisa "+money.format(remain));if((k=="recv"||k=="debt")&&remain>0)add(button(if(k=="recv")"Catat Piutang Diterima" else "Catat Pembayaran Hutang"){val f=input("Nominal",remain.toString(),true);AlertDialog.Builder(this).setTitle("Pembayaran").setView(f).setNegativeButton("Batal",null).setPositiveButton("Simpan"){_,_->val n=f.text.toString().toLongOrNull();if(n==null||n<=0||n>remain)toast("Nominal tidak valid")else{db.pay(id,n);render()}}.show()})}}
+ fun cashDialog(){val box=LinearLayout(this).apply{orientation=1;setPadding(18,4,18,4)};val sp=Spinner(this);val kinds=arrayOf("Pemasukan","Pengeluaran","Hutang","Piutang");sp.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,kinds);val party=input("Nama pihak / pelanggan");val amount=input("Nominal Rp",num=true);val note=input("Keterangan");listOf(sp,party,amount,note).forEach{box.addView(it)};AlertDialog.Builder(this).setTitle("Catat Buku Kas").setView(box).setNegativeButton("Batal",null).setPositiveButton("Simpan"){_,_->val n=amount.text.toString().toLongOrNull();if(n==null||n<=0){toast("Nominal tidak valid");return@setPositiveButton};db.addCash(arrayOf("in","out","debt","recv")[sp.selectedItemPosition],party.text.toString(),note.text.toString(),n);render()}.show()}
+ fun settings(){heading("Profil Usaha & Struk");val store=input("Nama usaha",db.setting("store","Mizanku"));val address=input("Alamat",db.setting("address"));val phone=input("Telepon",db.setting("phone"));val footer=input("Pesan penutup struk",db.setting("footer","Terima kasih"));listOf(store,address,phone,footer).forEach{add(it)};add(button("Simpan Profil"){db.set("store",store.text.toString());db.set("address",address.text.toString());db.set("phone",phone.text.toString());db.set("footer",footer.text.toString());toast("Pengaturan disimpan");render()});heading("QRIS Pembayaran");card(if(qris.isBlank())"QRIS belum dipilih" else "QRIS tersimpan pada perangkat");add(button("Pilih Gambar QRIS"){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE),202)});add(button("Hapus QRIS"){qris="";db.set("qris","");render()});heading("Cadangkan & Pulihkan");add(button("Cadangkan Data JSON"){startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").putExtra(Intent.EXTRA_TITLE,"Mizanku-backup.json"),200)});add(button("Pulihkan Data JSON"){startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE),201)});add(button("Ekspor Produk CSV"){val b=StringBuilder("Nama,Harga,Modal,Stok,Barcode,Kategori\n");db.products().forEach{b.append(it.name+","+it.price+","+it.cost+","+it.stock+","+it.barcode+","+it.category+"\n")};saveText("text/csv","Mizanku-produk.csv",b.toString())});card("Mizanku Android • Data disimpan lokal di perangkat. Cadangkan data secara berkala.")}
+ fun saveText(mime:String,name:String,s:String){pending=s;startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).setType(mime).putExtra(Intent.EXTRA_TITLE,name),203)}
+ override fun onActivityResult(req:Int,res:Int,data:Intent?){super.onActivityResult(req,res,data);if(res!=RESULT_OK||data?.data==null)return;val u=data.data!!;try{when(req){200->contentResolver.openOutputStream(u)?.use{it.write(db.backup().toByteArray())}.also{toast("Cadangan berhasil")};201->contentResolver.openInputStream(u)?.bufferedReader()?.use{db.restore(it.readText())}.also{toast("Data dipulihkan");render()};202->{qris=u.toString();contentResolver.takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION);db.set("qris",qris);render()};203->contentResolver.openOutputStream(u)?.use{it.write(pending.toByteArray())}.also{toast("File diekspor")}}}catch(e:Exception){toast("Gagal: "+e.message)}}
+ override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?){super.onActivityResult(requestCode,resultCode,data)}
+ fun toast(s:String){Toast.makeText(this,s,Toast.LENGTH_LONG).show()}
 }
