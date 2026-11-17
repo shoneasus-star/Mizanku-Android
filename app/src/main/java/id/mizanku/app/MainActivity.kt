@@ -60,19 +60,37 @@ class StoreDb(a:Activity):SQLiteOpenHelper(a,"mizanku.db",null,2){
 }
 
 class MainActivity:Activity(){
- lateinit var db:StoreDb;val cart=linkedMapOf<Long,Line>();var page="Kasir";var discount=0L;var qris=""
+ lateinit var db:StoreDb;val cart=linkedMapOf<Long,Line>();var page="Beranda";var discount=0L;var qris=""
  lateinit var body:LinearLayout;val money=NumberFormat.getCurrencyInstance(Locale("id","ID"));val ink=0xff172033.toInt()
  var pending=""
+ private val emerald=0xff059669.toInt();private val deep=0xff064e3b.toInt();private val muted=0xff64748b.toInt()
+ fun dp(v:Int)= (v*resources.displayMetrics.density).toInt()
+ fun shape(color:Int,radius:Int,stroke:Int=0)=android.graphics.drawable.GradientDrawable().apply{setColor(color);cornerRadius=dp(radius).toFloat();if(stroke!=0)setStroke(dp(1),stroke)}
  override fun onCreate(b:Bundle?){super.onCreate(b);db=StoreDb(this);qris=db.setting("qris");render()}
- fun label(s:String,z:Float=14f,b:Boolean=false)=TextView(this).apply{text=s;textSize=z;setTextColor(ink);if(b)setTypeface(null,Typeface.BOLD);setPadding(8,8,8,8)}
- fun button(s:String,f:()->Unit)=Button(this).apply{text=s;setOnClickListener{f()}}
- fun input(h:String,v:String="",num:Boolean=false)=EditText(this).apply{hint=h;setText(v);if(num)inputType=2}
- fun add(v:View){body.addView(v)}
- fun row(vararg v:View)=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER_VERTICAL;v.forEach{addView(it,LinearLayout.LayoutParams(0,-2,1f))}}
- fun heading(s:String){add(label(s,18f,true))}
- fun card(s:String){val v=label(s,15f);v.setBackgroundColor(-1);val p=LinearLayout.LayoutParams(-1,-2);p.setMargins(0,4,0,4);body.addView(v,p)}
- fun render(){val root=LinearLayout(this).apply{orientation=1;setPadding(10,8,10,8);setBackgroundColor(0xfff2f5f4.toInt())};root.addView(label(db.setting("store","Mizanku"),24f,true));root.addView(label("Kasir UMKM • Offline • v0.2.0",12f));val nav=HorizontalScrollView(this);val bar=LinearLayout(this).apply{orientation=0};listOf("Beranda","Kasir","Produk","Stok","Riwayat","Buku Kas","Pengaturan").forEach{bar.addView(button(it){page=it;render()})};nav.addView(bar);root.addView(nav);val sc=ScrollView(this);body=LinearLayout(this).apply{orientation=1};sc.addView(body);root.addView(sc,LinearLayout.LayoutParams(-1,0,1f));setContentView(root);when(page){"Beranda"->home();"Kasir"->pos();"Produk"->products();"Stok"->inventory();"Riwayat"->history();"Buku Kas"->cashbook();else->settings()}}
- fun home(){heading("Ringkasan Hari Ini");var sum=0L;var count=0;db.sales().filter{it.getLong("time")>=dayStart()}.forEach{sum+=it.getLong("total");count++};card("Penjualan hari ini: "+money.format(sum)+"\n"+count+" transaksi");card("Produk aktif: "+db.products().size+" • Stok menipis: "+db.products().count{it.stock<=5});add(button("Mulai Transaksi"){page="Kasir";render()});heading("Transaksi Terbaru");db.sales().take(5).forEach{card("#"+it.getLong("id")+" • "+StoreDb.date(it.getLong("time"))+"\n"+money.format(it.getLong("total")))}}
+ fun label(s:String,z:Float=14f,b:Boolean=false)=TextView(this).apply{text=s;textSize=z;setTextColor(ink);if(b)setTypeface(null,Typeface.BOLD);setPadding(dp(8),dp(7),dp(8),dp(7))}
+ fun button(s:String,f:()->Unit)=Button(this).apply{text=s;textSize=12f;isAllCaps=false;setTextColor(-1);typeface=Typeface.DEFAULT_BOLD;background=shape(emerald,14);elevation=dp(2).toFloat();minHeight=dp(44);setPadding(dp(12),dp(4),dp(12),dp(4));setOnClickListener{f()}}
+ fun input(h:String,v:String="",num:Boolean=false)=EditText(this).apply{hint=h;setText(v);textSize=14f;setTextColor(ink);setPadding(dp(14),dp(11),dp(14),dp(11));background=shape(-1,13,0xffdbe7e2.toInt());if(num)inputType=2}
+ fun add(v:View){val p=LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(4),0,dp(5));body.addView(v,p)}
+ fun row(vararg v:View)=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER_VERTICAL;v.forEach{val p=LinearLayout.LayoutParams(0,-2,1f);p.setMargins(dp(3),dp(3),dp(3),dp(3));addView(it,p)}}
+ fun heading(s:String){val v=label(s,17f,true);v.setPadding(dp(3),dp(18),dp(3),dp(7));add(v)}
+ fun card(s:String){val v=label(s,14f);v.setPadding(dp(16),dp(15),dp(16),dp(15));v.background=shape(-1,18,0xffe7efeb.toInt());v.elevation=dp(2).toFloat();add(v)}
+ fun metric(title:String,value:String,caption:String){val v=LinearLayout(this).apply{orientation=1;setPadding(dp(14),dp(14),dp(14),dp(14));background=shape(-1,18,0xffe5eee9.toInt());elevation=dp(2).toFloat();addView(label(title,11f).apply{setTextColor(muted)});addView(label(value,18f,true).apply{setTextColor(deep)});addView(label(caption,10f).apply{setTextColor(muted)})};}
+ fun render(){val root=LinearLayout(this).apply{orientation=1;setBackgroundColor(0xfff4f8f6.toInt())}
+  val hero=LinearLayout(this).apply{orientation=1;setPadding(dp(18),dp(18),dp(18),dp(16));background=android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,intArrayOf(0xff065f46.toInt(),0xff10a37f.toInt())).apply{cornerRadii=floatArrayOf(0f,0f,0f,0f,dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat()}}
+  hero.addView(label("MIZANKU  •  SISTEM KASIR",11f,true).apply{setTextColor(0xffd1fae5.toInt())})
+  hero.addView(label(db.setting("store","Mizanku"),23f,true).apply{setTextColor(-1);setPadding(dp(2),dp(4),dp(2),dp(2))})
+  hero.addView(label("Kelola usaha lebih mudah • Offline",11f).apply{setTextColor(0xffecfdf5.toInt())})
+  root.addView(hero)
+  val nav=HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;setBackgroundColor(-1);setPadding(dp(7),dp(7),dp(7),dp(7))}
+  val bar=LinearLayout(this).apply{orientation=0;gravity=Gravity.CENTER_VERTICAL}
+  listOf("Beranda","Kasir","Produk","Stok","Riwayat","Buku Kas","Pengaturan").forEach{item->val active=item==page;val t=TextView(this).apply{text=item;textSize=11f;typeface=Typeface.DEFAULT_BOLD;gravity=Gravity.CENTER;setTextColor(if(active)-1 else muted);setPadding(dp(13),dp(11),dp(13),dp(11));background=shape(if(active)emerald else 0xfff1f5f3.toInt(),22);setOnClickListener{page=item;render()}};val p=LinearLayout.LayoutParams(-2,-2);p.setMargins(dp(3),0,dp(3),0);bar.addView(t,p)}
+  nav.addView(bar);root.addView(nav)
+  val sc=ScrollView(this).apply{clipToPadding=false;setPadding(dp(14),dp(7),dp(14),dp(18))}
+  body=LinearLayout(this).apply{orientation=1};sc.addView(body);root.addView(sc,LinearLayout.LayoutParams(-1,0,1f))
+  val foot=label("Mizanku  •  Data tersimpan di perangkat",10f).apply{gravity=Gravity.CENTER;setTextColor(muted);setPadding(dp(8),dp(8),dp(8),dp(8));setBackgroundColor(-1)}
+  root.addView(foot);setContentView(root)
+  when(page){"Beranda"->home();"Kasir"->pos();"Produk"->products();"Stok"->inventory();"Riwayat"->history();"Buku Kas"->cashbook();else->settings()}}
+ fun home(){heading("Ringkasan Hari Ini");var sum=0L;var count=0;db.sales().filter{it.getLong("time")>=dayStart()}.forEach{sum+=it.getLong("total");count++};card("PENJUALAN HARI INI\n"+money.format(sum)+"\n"+count+" transaksi tercatat");val ps=db.products();val low=ps.count{it.stock<=5};card("PRODUK AKTIF\n"+ps.size+" produk\n"+low+" produk perlu restok");add(button("＋  Mulai Transaksi"){page="Kasir";render()});heading("Transaksi Terbaru");db.sales().take(5).forEach{card("Transaksi #"+it.getLong("id")+"  •  "+StoreDb.date(it.getLong("time"))+"\n"+money.format(it.getLong("total"))+"  •  "+it.getString("payment"))}}
  fun dayStart():Long{val c=Calendar.getInstance();c.set(Calendar.HOUR_OF_DAY,0);c.set(Calendar.MINUTE,0);c.set(Calendar.SECOND,0);c.set(Calendar.MILLISECOND,0);return c.timeInMillis}
  fun pos(){heading("Kasir / Penjualan");val search=input("Cari nama produk / barcode");add(search);add(row(button("Cari"){showProducts(search.text.toString())},button("Scan Barcode"){IntentIntegrator(this).setPrompt("Arahkan kamera ke barcode").setBeepEnabled(false).initiateScan()}));val code=input("Barcode scanner USB/Bluetooth");add(row(code,button("Tambah Kode"){val p=db.products(code.text.toString()).firstOrNull{it.barcode==code.text.toString()};if(p==null)toast("Barcode tidak ditemukan")else addCart(p)}));add(button("Tampilkan Produk"){showProducts(search.text.toString())});heading("Keranjang");if(cart.isEmpty())card("Keranjang masih kosong");cart.values.forEach{l->card(l.p.name+" × "+l.qty+" = "+money.format(l.p.price*l.qty));add(row(button("−"){if(l.qty>1)l.qty-- else cart.remove(l.p.id);render()},button("+"){l.qty++;render()},button("Hapus"){cart.remove(l.p.id);render()}))};val sub=cart.values.sumOf{it.p.price*it.qty};val total=(sub-discount).coerceAtLeast(0);card("Subtotal "+money.format(sub)+"\nDiskon "+money.format(discount)+"\nTOTAL "+money.format(total));add(button("Atur Diskon"){val f=input("Nominal diskon",discount.toString(),true);AlertDialog.Builder(this).setTitle("Diskon").setView(f).setNegativeButton("Batal",null).setPositiveButton("Simpan"){_,_->discount=f.text.toString().toLongOrNull()?:0;render()}.show()});add(button("Pembayaran / Selesaikan"){if(cart.isEmpty())toast("Keranjang kosong")else payDialog(total)})}
  fun showProducts(q:String){val ps=db.products(q);if(ps.isEmpty()){toast("Produk tidak ditemukan");return};AlertDialog.Builder(this).setTitle("Pilih produk").setItems(ps.map{it.name+" • "+money.format(it.price)+" • stok "+it.stock}.toTypedArray()){_,i->addCart(ps[i])}.show()}
