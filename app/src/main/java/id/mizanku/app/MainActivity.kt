@@ -76,7 +76,7 @@ class MainActivity:Activity(){
  fun card(s:String){val v=label(s,14f);v.setPadding(dp(16),dp(15),dp(16),dp(15));v.background=shape(-1,18,0xffe7efeb.toInt());v.elevation=dp(2).toFloat();add(v)}
  fun metric(title:String,value:String,caption:String){val v=LinearLayout(this).apply{orientation=1;setPadding(dp(14),dp(14),dp(14),dp(14));background=shape(-1,18,0xffe5eee9.toInt());elevation=dp(2).toFloat();addView(label(title,11f).apply{setTextColor(muted)});addView(label(value,18f,true).apply{setTextColor(deep)});addView(label(caption,10f).apply{setTextColor(muted)})};}
  fun render(){val root=LinearLayout(this).apply{orientation=1;setBackgroundColor(0xfff4f8f6.toInt())}
-  val hero=LinearLayout(this).apply{orientation=1;setPadding(dp(18),dp(18),dp(18),dp(16));background=android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,intArrayOf(0xff065f46.toInt(),0xff10a37f.toInt())).apply{cornerRadii=floatArrayOf(0f,0f,0f,0f,dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat()}}
+  val hero=LinearLayout(this).apply{orientation=1;setPadding(dp(18),dp(18),dp(18),dp(16));background=android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,intArrayOf(0xff065f46.toInt(),0xff10a37f.toInt())).apply{cornerRadii=floatArrayOf(0f,0f,0f,0f,dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat(),dp(22).toFloat())}}
   hero.addView(label("MIZANKU  •  SISTEM KASIR",11f,true).apply{setTextColor(0xffd1fae5.toInt())})
   hero.addView(label(db.setting("store","Mizanku"),23f,true).apply{setTextColor(-1);setPadding(dp(2),dp(4),dp(2),dp(2))})
   hero.addView(label("Kelola usaha lebih mudah • Offline",11f).apply{setTextColor(0xffecfdf5.toInt())})
